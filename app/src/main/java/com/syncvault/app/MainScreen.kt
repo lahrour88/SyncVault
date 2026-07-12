@@ -81,7 +81,12 @@ fun MainScreen() {
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
         Text("Source folders:", style = MaterialTheme.typography.titleSmall)
         Spacer(modifier = Modifier.height(4.dp))
 
@@ -211,7 +216,7 @@ fun MainScreen() {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .heightIn(min = 120.dp, max = 280.dp)
                 .verticalScroll(rememberScrollState())
         ) {
             logLines.forEach { line ->
@@ -220,3 +225,4 @@ fun MainScreen() {
         }
     }
 }
+
