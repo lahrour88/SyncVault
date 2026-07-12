@@ -2,6 +2,7 @@ package com.syncvault.app
 
 import android.content.Context
 import android.net.Uri
+import android.util.Base64
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
@@ -9,7 +10,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
+import java.security.GeneralSecurityException
 import java.security.MessageDigest
+import javax.crypto.SecretKey
 
 data class SyncProgress(
     val processed: Int,
@@ -25,6 +28,12 @@ class SyncEngine(private val context: Context) {
 
     private val fingerprintsFile = File(context.filesDir, "fingerprints.json")
     private val fingerprints = mutableSetOf<String>()
+
+    companion object {
+        private const val SALT_FILE_NAME = "syncvault.salt"
+        private const val CHECK_FILE_NAME = "syncvault.check"
+        private const val CHECK_TEXT = "SyncVaultKeyCheck-v1"
+    }
 
     init {
         loadFingerprints()
@@ -91,29 +100,101 @@ class SyncEngine(private val context: Context) {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    /**
+     * Loads the salt stored inside [destDoc] (creating it on first run) and
+     * derives the AES key from [password]. Then verifies the key against a
+     * small encrypted check token stored alongside the salt, so a mistyped
+     * password is caught immediately instead of silently producing files
+     * that can never be decrypted with the "real" password.
+     *
+     * Returns the derived key, or null (after logging an error) if the
+     * password does not match a pre-existing DriveSync folder.
+     */
+    private fun loadOrCreateKey(destDoc: DocumentFile, password: CharArray, onLog: (String) -> Unit): SecretKey? {
+        val saltFile = destDoc.findFile(SALT_FILE_NAME)
+        val salt: ByteArray
+
+        if (saltFile == null) {
+            // First time encrypting into this folder: generate and store a new salt.
+            salt = Crypto.randomSalt()
+            // application/octet-stream avoids some SAF providers appending a
+            // ".txt" extension onto the name for text/plain.
+            val newSaltFile = destDoc.createFile("application/octet-stream", SALT_FILE_NAME)
+                ?: run { onLog("Error: Cannot write $SALT_FILE_NAME to destination folder."); return null }
+            context.contentResolver.openOutputStream(newSaltFile.uri)?.use {
+                it.write(Base64.encode(salt, Base64.NO_WRAP))
+            } ?: run { onLog("Error: Cannot open $SALT_FILE_NAME for writing."); return null }
+        } else {
+            val saltText = context.contentResolver.openInputStream(saltFile.uri)?.use { it.readBytes() }
+                ?: run { onLog("Error: Cannot read $SALT_FILE_NAME."); return null }
+            salt = Base64.decode(saltText, Base64.NO_WRAP)
+        }
+
+        val key = Crypto.deriveKey(password, salt)
+
+        val checkFile = destDoc.findFile(CHECK_FILE_NAME)
+        if (checkFile == null) {
+            val newCheckFile = destDoc.createFile("application/octet-stream", CHECK_FILE_NAME)
+                ?: run { onLog("Error: Cannot write $CHECK_FILE_NAME to destination folder."); return null }
+            val encrypted = Crypto.encryptBytes(CHECK_TEXT.toByteArray(Charsets.UTF_8), key)
+            context.contentResolver.openOutputStream(newCheckFile.uri)?.use { it.write(encrypted) }
+                ?: run { onLog("Error: Cannot open $CHECK_FILE_NAME for writing."); return null }
+        } else {
+            val encrypted = context.contentResolver.openInputStream(checkFile.uri)?.use { it.readBytes() }
+                ?: run { onLog("Error: Cannot read $CHECK_FILE_NAME."); return null }
+            try {
+                val decrypted = Crypto.decryptBytes(encrypted, key)
+                if (String(decrypted, Charsets.UTF_8) != CHECK_TEXT) {
+                    onLog("Error: Incorrect password for this DriveSync folder.")
+                    return null
+                }
+            } catch (e: GeneralSecurityException) {
+                onLog("Error: Incorrect password for this DriveSync folder.")
+                return null
+            }
+        }
+
+        return key
+    }
+
     suspend fun sync(
-        sourceUri: Uri,
+        sourceUris: List<Uri>,
         destUri: Uri,
+        password: CharArray,
         onProgress: (SyncProgress) -> Unit,
         onLog: (String) -> Unit,
         onStats: (String) -> Unit
     ) = withContext(Dispatchers.IO) {
-        val sourceDoc = DocumentFile.fromTreeUri(context, sourceUri)
-            ?: return@withContext onLog("Error: Cannot access source folder.")
+        if (sourceUris.isEmpty()) {
+            onLog("Error: No source folders selected.")
+            return@withContext
+        }
+
         val destDoc = DocumentFile.fromTreeUri(context, destUri)
             ?: return@withContext onLog("Error: Cannot access destination folder.")
 
+        val cryptoKey = loadOrCreateKey(destDoc, password, onLog) ?: run {
+            onStats("Scan aborted: incorrect password.")
+            return@withContext
+        }
+
         val files = mutableListOf<DocumentFile>()
-        collectFiles(sourceDoc, files)
+        for (sourceUri in sourceUris) {
+            val sourceDoc = DocumentFile.fromTreeUri(context, sourceUri)
+            if (sourceDoc == null) {
+                onLog("Error: Cannot access a source folder, skipping it.")
+                continue
+            }
+            collectFiles(sourceDoc, files)
+        }
 
         val total = files.size
-        onLog("Found $total image files.")
+        onLog("Found $total image file(s) across ${sourceUris.size} source folder(s).")
         if (total == 0) {
             onStats("No images found.")
             return@withContext
         }
 
-        val cryptoKey = Crypto.getOrCreateKey()
         var processed = 0
         var encrypted = 0
         var skipped = 0
@@ -121,10 +202,6 @@ class SyncEngine(private val context: Context) {
 
         for (file in files) {
             if (!isActive) {
-                // FIX: previously this returned without persisting any progress at all.
-                // Fingerprints for files already encrypted in this run were saved
-                // incrementally below, so cancelling here is now safe: nothing already
-                // written to disk will be silently lost or re-processed as a duplicate.
                 onLog("Scan cancelled. $encrypted file(s) already encrypted this run remain saved.")
                 val summary = "Cancelled. Total: $total, Encrypted: $encrypted, Skipped: $skipped, Failed: $failed"
                 onStats(summary)
@@ -147,10 +224,6 @@ class SyncEngine(private val context: Context) {
 
                 val finalName = "$hash.enc"
 
-                // FIX: guard against a previous run that encrypted this file but
-                // crashed/was killed before its fingerprint got persisted. Without
-                // this check the file would be re-encrypted and, since DocumentFile
-                // renameTo() does not overwrite, a duplicate "(1)" copy would appear.
                 if (destDoc.findFile(finalName) != null) {
                     onLog("Destination file already exists, registering as processed.")
                     fingerprints.add(hash)
@@ -162,8 +235,6 @@ class SyncEngine(private val context: Context) {
                 }
 
                 val tempName = "$hash.enc.tmp"
-
-                // Remove any leftover temp from a previous failed attempt
                 destDoc.findFile(tempName)?.delete()
 
                 val tempFile = destDoc.createFile("application/octet-stream", tempName)
@@ -182,16 +253,12 @@ class SyncEngine(private val context: Context) {
                     outputStream.closeQuietly()
                 }
 
-                // Atomic rename
                 val renamed = tempFile.renameTo(finalName)
                 if (!renamed) {
                     tempFile.delete()
                     throw Exception("Rename to final name failed")
                 }
 
-                // FIX: persist the fingerprint immediately after each successful file
-                // instead of only once at the very end of the whole scan. This is what
-                // makes safe cancellation and crash recovery (checks above) possible.
                 fingerprints.add(hash)
                 saveFingerprints()
                 encrypted++
