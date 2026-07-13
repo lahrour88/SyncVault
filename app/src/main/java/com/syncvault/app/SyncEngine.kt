@@ -109,9 +109,21 @@ class SyncEngine(private val context: Context) {
      *
      * Returns the derived key, or null (after logging an error) if the
      * password does not match a pre-existing DriveSync folder.
+     *
+     * Modified to store salt and check files inside a "metadata" subfolder.
      */
     private fun loadOrCreateKey(destDoc: DocumentFile, password: CharArray, onLog: (String) -> Unit): SecretKey? {
-        val saltFile = destDoc.findFile(SALT_FILE_NAME)
+        // Ensure metadata directory exists
+        var metadataDir = destDoc.findFile("metadata")
+        if (metadataDir == null) {
+            metadataDir = destDoc.createDirectory("metadata")
+            if (metadataDir == null) {
+                onLog("Error: Cannot create metadata directory.")
+                return null
+            }
+        }
+
+        val saltFile = metadataDir.findFile(SALT_FILE_NAME)
         val salt: ByteArray
 
         if (saltFile == null) {
@@ -119,8 +131,8 @@ class SyncEngine(private val context: Context) {
             salt = Crypto.randomSalt()
             // application/octet-stream avoids some SAF providers appending a
             // ".txt" extension onto the name for text/plain.
-            val newSaltFile = destDoc.createFile("application/octet-stream", SALT_FILE_NAME)
-                ?: run { onLog("Error: Cannot write $SALT_FILE_NAME to destination folder."); return null }
+            val newSaltFile = metadataDir.createFile("application/octet-stream", SALT_FILE_NAME)
+                ?: run { onLog("Error: Cannot write $SALT_FILE_NAME to metadata folder."); return null }
             context.contentResolver.openOutputStream(newSaltFile.uri)?.use {
                 it.write(Base64.encode(salt, Base64.NO_WRAP))
             } ?: run { onLog("Error: Cannot open $SALT_FILE_NAME for writing."); return null }
@@ -132,10 +144,10 @@ class SyncEngine(private val context: Context) {
 
         val key = Crypto.deriveKey(password, salt)
 
-        val checkFile = destDoc.findFile(CHECK_FILE_NAME)
+        val checkFile = metadataDir.findFile(CHECK_FILE_NAME)
         if (checkFile == null) {
-            val newCheckFile = destDoc.createFile("application/octet-stream", CHECK_FILE_NAME)
-                ?: run { onLog("Error: Cannot write $CHECK_FILE_NAME to destination folder."); return null }
+            val newCheckFile = metadataDir.createFile("application/octet-stream", CHECK_FILE_NAME)
+                ?: run { onLog("Error: Cannot write $CHECK_FILE_NAME to metadata folder."); return null }
             val encrypted = Crypto.encryptBytes(CHECK_TEXT.toByteArray(Charsets.UTF_8), key)
             context.contentResolver.openOutputStream(newCheckFile.uri)?.use { it.write(encrypted) }
                 ?: run { onLog("Error: Cannot open $CHECK_FILE_NAME for writing."); return null }
