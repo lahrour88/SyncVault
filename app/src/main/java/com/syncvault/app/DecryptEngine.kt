@@ -4,183 +4,196 @@ import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
-import javax.crypto.Cipher
-import javax.crypto.SecretKey
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.PBEKeySpec
-import javax.crypto.spec.SecretKeySpec
+import java.io.InputStream
+import java.io.OutputStream
 
-object DecryptEngine {
+/**
+ * محرك المزامنة: يقوم بمسح المجلدات المصدر، حساب الهاش، تشفير الملفات الجديدة/المعدلة،
+ * ونسخها إلى مجلد الوجهة (DriveSync). يحتفظ باسم الملف الأصلي داخل البيانات المشفرة.
+ */
+class SyncEngine(private val context: Context) {
 
-    private const val PBKDF2_ITERATIONS = 210_000
-    private const val KEY_LENGTH_BYTES = 32
-    private const val IV_LENGTH_BYTES = 12
-    private const val TAG_LENGTH_BYTES = 16
+    private val crypto = Crypto(context)
 
-    private val MAGIC_BYTES = mapOf(
-        byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte()) to ".jpg",
-        byteArrayOf(0x89.toByte(), 0x50.toByte(), 0x4E.toByte(), 0x47.toByte(), 0x0D.toByte(), 0x0A.toByte(), 0x1A.toByte(), 0x0A.toByte()) to ".png",
-        byteArrayOf(0x47.toByte(), 0x49.toByte(), 0x46.toByte(), 0x38.toByte(), 0x37.toByte(), 0x61.toByte()) to ".gif",
-        byteArrayOf(0x47.toByte(), 0x49.toByte(), 0x46.toByte(), 0x38.toByte(), 0x39.toByte(), 0x61.toByte()) to ".gif",
-        byteArrayOf(0x42.toByte(), 0x4D.toByte()) to ".bmp",
-    )
-
-    private fun guessExtension(data: ByteArray): String {
-        val sample = data.take(12).toByteArray()
-        for ((magic, ext) in MAGIC_BYTES) {
-            if (sample.size >= magic.size) {
-                var match = true
-                for (i in magic.indices) {
-                    if (sample[i] != magic[i]) {
-                        match = false
-                        break
-                    }
-                }
-                if (match) return ext
-            }
-        }
-        if (sample.size >= 12 &&
-            sample[0] == 0x52.toByte() && sample[1] == 0x49.toByte() &&
-            sample[2] == 0x46.toByte() && sample[3] == 0x46.toByte() &&
-            sample[8] == 0x57.toByte() && sample[9] == 0x45.toByte() &&
-            sample[10] == 0x42.toByte() && sample[11] == 0x50.toByte()
-        ) {
-            return ".webp"
-        }
-        return ".bin"
-    }
-
-    private fun mimeFromExtension(ext: String): String {
-        return when (ext) {
-            ".jpg", ".jpeg" -> "image/jpeg"
-            ".png" -> "image/png"
-            ".gif" -> "image/gif"
-            ".bmp" -> "image/bmp"
-            ".webp" -> "image/webp"
-            else -> "application/octet-stream"
-        }
-    }
-
-    private fun deriveKey(password: String, salt: ByteArray): SecretKey {
-        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val spec = PBEKeySpec(password.toCharArray(), salt, PBKDF2_ITERATIONS, KEY_LENGTH_BYTES * 8)
-        return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
-    }
-
-    data class DecryptResult(val success: Int, val failed: Int)
-
-    suspend fun decrypt(
-        context: Context,
-        sourceUri: Uri,
+    /**
+     * نقطة الدخول الرئيسية لعملية المزامنة.
+     * @param sourceUris قائمة بأريطة مجلدات المصدر
+     * @param destUri أريط مجلد الوجهة
+     * @param password كلمة المرور (للتشفير)
+     * @param onProgress دالة استدعاء لتحديث التقدم
+     * @param onLog دالة استدعاء لتسجيل الرسائل
+     * @param onStats دالة استدعاء لإحصائيات النهاية
+     */
+    suspend fun sync(
+        sourceUris: List<Uri>,
         destUri: Uri,
-        password: String,
-        saltBase64: String,
+        password: CharArray,
+        onProgress: (SyncProgress) -> Unit,
         onLog: (String) -> Unit,
-        onProgress: (current: Int, total: Int) -> Unit
-    ): DecryptResult = withContext(Dispatchers.IO) {
+        onStats: (String) -> Unit
+    ) {
+        // تنفيذ العملية على خيط خلفي
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val resolver = context.contentResolver
+            val destFolder = DocumentFile.fromTreeUri(context, destUri)
+            if (destFolder == null || !destFolder.isDirectory) {
+                onLog("خطأ: مجلد الوجهة غير صالح.")
+                return@withContext
+            }
 
-        val salt = try {
-            android.util.Base64.decode(saltBase64, android.util.Base64.DEFAULT)
-        } catch (e: Exception) {
-            onLog("خطأ: قيمة الملح (Salt) غير صالحة (ليست Base64 صحيحة).")
-            return@withContext DecryptResult(0, 0)
-        }
-
-        val key = deriveKey(password, salt)
-        val resolver: ContentResolver = context.contentResolver
-
-        val sourceDoc = DocumentFile.fromTreeUri(context, sourceUri)
-        if (sourceDoc == null || !sourceDoc.isDirectory) {
-            onLog("خطأ: مجلد المصدر غير صالح.")
-            return@withContext DecryptResult(0, 0)
-        }
-
-        val encFiles = sourceDoc.listFiles().filter { it.isFile && it.name?.endsWith(".enc") == true }
-        if (encFiles.isEmpty()) {
-            onLog("لا توجد ملفات بامتداد .enc في المجلد المحدد.")
-            return@withContext DecryptResult(0, 0)
-        }
-
-        val destDoc = DocumentFile.fromTreeUri(context, destUri)
-        if (destDoc == null || !destDoc.isDirectory) {
-            onLog("خطأ: مجلد الوجهة غير صالح.")
-            return@withContext DecryptResult(0, 0)
-        }
-
-        var successCount = 0
-        var failCount = 0
-        val total = encFiles.size
-
-        encFiles.forEachIndexed { index, file ->
-            val fileName = file.name ?: "unknown.enc"
-            onProgress(index + 1, total)
-
-            try {
-                resolver.openInputStream(file.uri).use { inputStream ->
-                    if (inputStream == null) {
-                        onLog("[$fileName] فشل: لا يمكن قراءة الملف.")
-                        failCount++
-                        return@forEachIndexed
+            // تجميع قائمة الملفات من جميع المجلدات المصدر
+            val allFiles = mutableListOf<Pair<Uri, String>>() // (Uri, اسم الملف)
+            sourceUris.forEach { srcUri ->
+                val folder = DocumentFile.fromTreeUri(context, srcUri)
+                if (folder != null && folder.isDirectory) {
+                    folder.listFiles().forEach { file ->
+                        if (file.isFile) {
+                            allFiles.add(file.uri to (file.name ?: "unknown"))
+                        }
                     }
-
-                    // قراءة الملف بالكامل (هذا يستهلك الذاكرة، لكنه بسيط)
-                    val encryptedBytes = inputStream.readBytes()
-                    if (encryptedBytes.isEmpty()) {
-                        onLog("[$fileName] فشل: الملف فارغ.")
-                        failCount++
-                        return@forEachIndexed
-                    }
-
-                    // استخراج IV والـ Tag والنص المشفر
-                    val iv = encryptedBytes.sliceArray(0 until IV_LENGTH_BYTES)
-                    val ciphertext = encryptedBytes.sliceArray(IV_LENGTH_BYTES until encryptedBytes.size - TAG_LENGTH_BYTES)
-                    val tag = encryptedBytes.sliceArray(encryptedBytes.size - TAG_LENGTH_BYTES until encryptedBytes.size)
-
-                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                    cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_LENGTH_BYTES * 8, iv))
-
-                    val plaintext = try {
-                        cipher.doFinal(ciphertext + tag)
-                    } catch (e: javax.crypto.AEADBadTagException) {
-                        onLog("[$fileName] فشل: كلمة المرور أو الملح غير صحيحين (AEAD Bad Tag).")
-                        failCount++
-                        return@forEachIndexed
-                    } catch (e: Exception) {
-                        onLog("[$fileName] فشل: ${e.message}")
-                        failCount++
-                        return@forEachIndexed
-                    }
-
-                    // تخمين الامتداد من البداية
-                    val ext = guessExtension(plaintext)
-                    val baseName = fileName.removeSuffix(".enc")
-                    val newName = baseName + ext
-                    val mimeType = mimeFromExtension(ext)
-
-                    val newFile = destDoc.createFile(mimeType, newName)
-                    if (newFile == null) {
-                        onLog("[$fileName] فشل: لا يمكن إنشاء الملف في الوجهة.")
-                        failCount++
-                        return@forEachIndexed
-                    }
-
-                    resolver.openOutputStream(newFile.uri).use { outputStream ->
-                        outputStream?.write(plaintext)
-                    }
-                    onLog("[$fileName] -> نجاح: $newName")
-                    successCount++
                 }
+            }
+
+            if (allFiles.isEmpty()) {
+                onLog("لا توجد ملفات في المجلدات المصدر.")
+                return@withContext
+            }
+
+            onLog("تم العثور على ${allFiles.size} ملفاً للمعالجة.")
+
+            var processed = 0
+            var encrypted = 0
+            var skipped = 0
+            var failed = 0
+
+            allFiles.forEach { (srcUri, fileName) ->
+                try {
+                    // إنشاء اسم ملف مشفر (استناداً إلى هاش المحتوى)
+                    val contentHash = crypto.hashFile(srcUri)
+                    val encFileName = contentHash + ".enc"
+                    val destFile = destFolder.findFile(encFileName) ?: destFolder.createFile(
+                        "application/octet-stream", encFileName
+                    )
+
+                    if (destFile == null) {
+                        onLog("خطأ: لا يمكن إنشاء الملف $encFileName في الوجهة.")
+                        failed++
+                        return@forEach
+                    }
+
+                    // التحقق إذا كان الملف موجوداً وتخطيه إذا كان مطابقاً (حسب الحجم أو التاريخ)
+                    // (هنا نكتفي بالتحقق من الوجود فقط، يمكن تحسينه)
+                    val existingFile = destFolder.findFile(encFileName)
+                    if (existingFile != null) {
+                        // إذا كان موجوداً، نتحقق من حجمه مقارنة بالمصدر (تخطي بسيط)
+                        val srcSize = resolver.openAssetFileDescriptor(srcUri, "r")?.length ?: 0
+                        val destSize = resolver.openAssetFileDescriptor(existingFile.uri, "r")?.length ?: 0
+                        if (srcSize > 0 && srcSize == destSize) {
+                            onLog("تخطي (موجود مسبقاً): $fileName")
+                            skipped++
+                            return@forEach
+                        }
+                    }
+
+                    // تشفير الملف مع حفظ اسمه الأصلي
+                    val success = encryptFileWithName(
+                        inputUri = srcUri,
+                        outputUri = destFile.uri,
+                        fileName = fileName,
+                        password = password
+                    )
+
+                    if (success) {
+                        encrypted++
+                        onLog("تم تشفير: $fileName -> $encFileName")
+                    } else {
+                        failed++
+                        onLog("فشل تشفير: $fileName")
+                    }
+                } catch (e: Exception) {
+                    onLog("خطأ أثناء معالجة $fileName: ${e.message}")
+                    failed++
+                } finally {
+                    processed++
+                    onProgress(
+                        SyncProgress(
+                            progress = processed.toFloat() / allFiles.size,
+                            processed = processed,
+                            total = allFiles.size,
+                            encrypted = encrypted,
+                            skipped = skipped,
+                            failed = failed
+                        )
+                    )
+                }
+            }
+
+            onStats("تم الانتهاء. معالج: $processed, مشفر: $encrypted, مخطي: $skipped, فاشل: $failed")
+        }
+    }
+
+    /**
+     * تشفير ملف مع حفظ اسمه الأصلي (بما في ذلك الامتداد) داخل البيانات المشفرة.
+     * التنسيق: [طول الاسم 4 بايت][اسم الملف UTF-8][محتوى الملف]
+     */
+    private suspend fun encryptFileWithName(
+        inputUri: Uri,
+        outputUri: Uri,
+        fileName: String,
+        password: CharArray
+    ): Boolean {
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val resolver = context.contentResolver
+            var inputStream: InputStream? = null
+            var outputStream: OutputStream? = null
+            try {
+                inputStream = resolver.openInputStream(inputUri)
+                outputStream = resolver.openOutputStream(outputUri)
+                if (inputStream == null || outputStream == null) {
+                    return@withContext false
+                }
+
+                // قراءة محتوى الملف كاملاً (للملفات الصغيرة والمتوسطة)
+                val fileBytes = inputStream.readBytes()
+
+                // تحضير البيانات: 4 بايتات للطول + اسم الملف + المحتوى
+                val nameBytes = fileName.toByteArray(Charsets.UTF_8)
+                val nameLen = nameBytes.size
+                val buffer = java.nio.ByteBuffer.allocate(4 + nameLen + fileBytes.size)
+                buffer.putInt(nameLen)          // طول الاسم
+                buffer.put(nameBytes)           // الاسم (UTF-8)
+                buffer.put(fileBytes)           // المحتوى
+                val dataToEncrypt = buffer.array()
+
+                // تشفير البيانات باستخدام Crypto (تقوم بإرجاع IV + ciphertext + Tag)
+                val encryptedData = crypto.encrypt(dataToEncrypt, password)
+
+                // كتابة البيانات المشفرة
+                outputStream.write(encryptedData)
+                true
             } catch (e: Exception) {
-                onLog("[$fileName] خطأ غير متوقع: ${e.message}")
-                failCount++
+                e.printStackTrace()
+                false
+            } finally {
+                inputStream?.close()
+                outputStream?.close()
             }
         }
-
-        onLog("تم الانتهاء. نجاح: $successCount, فشل: $failCount")
-        return@withContext DecryptResult(successCount, failCount)
     }
 }
+
+/**
+ * بيانات تقدم المزامنة.
+ */
+data class SyncProgress(
+    val progress: Float,
+    val processed: Int,
+    val total: Int,
+    val encrypted: Int,
+    val skipped: Int,
+    val failed: Int
+)
