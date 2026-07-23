@@ -4,6 +4,8 @@ import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
@@ -21,10 +23,10 @@ object DecryptEngine {
 
     private val MAGIC_BYTES = mapOf(
         byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte()) to ".jpg",
-        byteArrayOf(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) to ".png",
-        byteArrayOf(0x47, 0x49, 0x46, 0x38, 0x37, 0x61) to ".gif",
-        byteArrayOf(0x47, 0x49, 0x46, 0x38, 0x39, 0x61) to ".gif",
-        byteArrayOf(0x42, 0x4D) to ".bmp",
+        byteArrayOf(0x89.toByte(), 0x50.toByte(), 0x4E.toByte(), 0x47.toByte(), 0x0D.toByte(), 0x0A.toByte(), 0x1A.toByte(), 0x0A.toByte()) to ".png",
+        byteArrayOf(0x47.toByte(), 0x49.toByte(), 0x46.toByte(), 0x38.toByte(), 0x37.toByte(), 0x61.toByte()) to ".gif",
+        byteArrayOf(0x47.toByte(), 0x49.toByte(), 0x46.toByte(), 0x38.toByte(), 0x39.toByte(), 0x61.toByte()) to ".gif",
+        byteArrayOf(0x42.toByte(), 0x4D.toByte()) to ".bmp",
     )
 
     private fun guessExtension(data: ByteArray): String {
@@ -79,7 +81,7 @@ object DecryptEngine {
         saltBase64: String,
         onLog: (String) -> Unit,
         onProgress: (current: Int, total: Int) -> Unit
-    ): DecryptResult = withContext(kotlinx.coroutines.Dispatchers.IO) {
+    ): DecryptResult = withContext(Dispatchers.IO) {
 
         val salt = try {
             android.util.Base64.decode(saltBase64, android.util.Base64.DEFAULT)
