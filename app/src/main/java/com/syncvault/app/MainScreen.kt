@@ -89,11 +89,11 @@ fun MainScreen(
             .padding(16.dp)
             .verticalScroll(rememberScrollState())
     ) {
-        Text("Source folders:", style = MaterialTheme.typography.titleSmall)
+        Text("المجلدات المصدر:", style = MaterialTheme.typography.titleSmall)
         Spacer(modifier = Modifier.height(4.dp))
 
         if (sourceUris.isEmpty()) {
-            Text("None selected.", style = MaterialTheme.typography.bodyMedium)
+            Text("لم يتم اختيار أي مجلد.", style = MaterialTheme.typography.bodyMedium)
         }
         sourceUris.forEach { uriString ->
             Row(
@@ -105,24 +105,24 @@ fun MainScreen(
                     sourceUris.remove(uriString)
                     saveSourceUris(prefs, sourceUris)
                 }) {
-                    Text("Remove")
+                    Text("إزالة")
                 }
             }
         }
         Button(onClick = { addSourcePicker.launch(null) }) {
-            Text("+ Add Source Folder")
+            Text("+ إضافة مجلد مصدر")
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("DriveSync: ", modifier = Modifier.weight(0.3f))
+            Text("مجلد DriveSync: ", modifier = Modifier.weight(0.3f))
             Text(
-                text = destUri?.let { displayName(it) } ?: "Not selected",
+                text = destUri?.let { displayName(it) } ?: "غير محدد",
                 modifier = Modifier.weight(0.4f)
             )
             Button(onClick = { destPicker.launch(null) }, modifier = Modifier.weight(0.3f)) {
-                Text("Select")
+                Text("اختيار")
             }
         }
 
@@ -131,21 +131,19 @@ fun MainScreen(
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("Encryption Password") },
+            label = { Text("كلمة المرور للتشفير") },
             singleLine = true,
             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             trailingIcon = {
                 TextButton(onClick = { passwordVisible = !passwordVisible }) {
-                    Text(if (passwordVisible) "Hide" else "Show")
+                    Text(if (passwordVisible) "إخفاء" else "إظهار")
                 }
             },
             modifier = Modifier.fillMaxWidth()
         )
         Text(
-            "Remember this password. It is never stored. Only a non-secret salt is " +
-                "saved inside the DriveSync folder — you need both the password and " +
-                "that folder to decrypt files in the future."+" the applcation from abdeladime",
+            "تذكر كلمة المرور هذه. لا يتم تخزينها مطلقًا. يتم حفظ ملح غير سري داخل مجلد DriveSync — ستحتاج إلى كلمة المرور وهذا المجلد لفك تشفير الملفات في المستقبل. (التطبيق من عبد العظيم)",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -177,7 +175,7 @@ fun MainScreen(
                                     onStats = { stats = it }
                                 )
                             } catch (e: Exception) {
-                                logLines.add("Fatal error: ${e.message}")
+                                logLines.add("خطأ جسيم: ${e.message}")
                             } finally {
                                 scanning = false
                                 scanJob = null
@@ -187,18 +185,19 @@ fun MainScreen(
                 },
                 enabled = canScan
             ) {
-                Text("Scan")
+                Text(if (scanning) "جاري..." else "مسح")
             }
 
             if (scanning) {
                 Button(onClick = { scanJob?.cancel() }) {
-                    Text("Cancel")
+                    Text("إلغاء")
                 }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // ✅ التصحيح هنا: أغلقنا قوس Text بشكل صحيح
         Button(
             onClick = onNavigateToDecrypt,
             modifier = Modifier.fillMaxWidth(),
@@ -207,7 +206,7 @@ fun MainScreen(
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer
             )
         ) {
-            Text(" Decreption page"
+            Text("صفحة فك التشفير")
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -216,7 +215,7 @@ fun MainScreen(
             LinearProgressIndicator(progress = progress.progress, modifier = Modifier.fillMaxWidth())
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                "Processed: ${progress.processed}/${progress.total} | Encrypted: ${progress.encrypted} | Skipped: ${progress.skipped} | Failed: ${progress.failed}",
+                "تمت المعالجة: ${progress.processed}/${progress.total} | تم التشفير: ${progress.encrypted} | تم التخطي: ${progress.skipped} | فشل: ${progress.failed}",
                 style = MaterialTheme.typography.bodyMedium
             )
             Spacer(modifier = Modifier.height(4.dp))
@@ -227,7 +226,7 @@ fun MainScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        Text("Log:", style = MaterialTheme.typography.titleSmall)
+        Text("السجل:", style = MaterialTheme.typography.titleSmall)
         Column(
             modifier = Modifier
                 .fillMaxWidth()

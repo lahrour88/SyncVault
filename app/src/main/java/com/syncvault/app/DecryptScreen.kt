@@ -1,5 +1,3 @@
-// مسار: java/com/syncvault/app/DecryptScreen.kt
-
 package com.syncvault.app
 
 import android.content.Context
@@ -20,13 +18,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 private fun displayName(uriString: String?): String {
-    if (uriString == null) return "indifined "
+    if (uriString == null) return "غير محدد"
     return Uri.parse(uriString).lastPathSegment ?: uriString
 }
 
@@ -80,10 +75,10 @@ fun DecryptScreen(
         // عنوان ورجوع
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             TextButton(onClick = onNavigateBack) {
-                Text("Back")
+                Text("رجوع")
             }
             Spacer(modifier = Modifier.weight(1f))
-            Text("decrypt", style = MaterialTheme.typography.titleLarge)
+            Text("فك التشفير", style = MaterialTheme.typography.titleLarge)
             Spacer(modifier = Modifier.weight(1f))
         }
 
@@ -93,13 +88,13 @@ fun DecryptScreen(
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("password :") },
+            label = { Text("كلمة المرور :") },
             singleLine = true,
             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             trailingIcon = {
                 TextButton(onClick = { passwordVisible = !passwordVisible }) {
-                    Text(if (passwordVisible) "Show" else "Hide")
+                    Text(if (passwordVisible) "إخفاء" else "إظهار")
                 }
             },
             modifier = Modifier.fillMaxWidth()
@@ -116,8 +111,9 @@ fun DecryptScreen(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
             modifier = Modifier.fillMaxWidth()
         )
+        // ✅ التصحيح هنا: استخدمنا `text =` بدلاً من `Text=`، وأضفنا فاصلة قبل `style`
         Text(
-            Text="Enter the salt value extracted from the syncvault.salt file"
+            text = "أدخل قيمة الملح المستخرجة من ملف syncvault.salt",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -125,14 +121,14 @@ fun DecryptScreen(
 
         // اختيار مجلد المصدر
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Source Folder (.enc): ", modifier = Modifier.weight(0.4f))
+            Text("مجلد المصدر (.enc): ", modifier = Modifier.weight(0.4f))
             Text(
                 text = displayName(sourceUri?.toString()),
                 modifier = Modifier.weight(0.4f),
                 style = MaterialTheme.typography.bodyMedium
             )
             Button(onClick = { sourcePicker.launch(null) }, modifier = Modifier.weight(0.2f)) {
-                Text("select")
+                Text("اختيار")
             }
         }
 
@@ -140,14 +136,14 @@ fun DecryptScreen(
 
         // اختيار مجلد الوجهة
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(" Destination Folder", modifier = Modifier.weight(0.4f))
+            Text("مجلد الوجهة", modifier = Modifier.weight(0.4f))
             Text(
                 text = displayName(destUri?.toString()),
                 modifier = Modifier.weight(0.4f),
                 style = MaterialTheme.typography.bodyMedium
             )
             Button(onClick = { destPicker.launch(null) }, modifier = Modifier.weight(0.2f)) {
-                Text("select")
+                Text("اختيار")
             }
         }
 
@@ -198,7 +194,7 @@ fun DecryptScreen(
 
             if (isRunning) {
                 Button(onClick = { /* يمكن إضافة إلغاء هنا لاحقاً */ }) {
-                    Text("Cancel")
+                    Text("إلغاء")
                 }
             }
         }
