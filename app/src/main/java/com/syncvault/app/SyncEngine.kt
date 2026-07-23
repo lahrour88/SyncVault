@@ -258,7 +258,12 @@ class SyncEngine(private val context: Context) {
                     ?: throw Exception("Cannot open temporary output stream")
 
                 try {
-                    Crypto.encryptStream(inputStream, outputStream, cryptoKey)
+                    Crypto.encryptStream(
+                        input = inputStream,
+                        output = outputStream,
+                        key = cryptoKey,
+                        originalFileName = fileName
+                    )
                     outputStream.flush()
                 } finally {
                     inputStream.closeQuietly()

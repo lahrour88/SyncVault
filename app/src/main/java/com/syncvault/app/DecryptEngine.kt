@@ -6,7 +6,7 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
@@ -28,6 +28,12 @@ object DecryptEngine {
         byteArrayOf(0x47.toByte(), 0x49.toByte(), 0x46.toByte(), 0x38.toByte(), 0x39.toByte(), 0x61.toByte()) to ".gif",
         byteArrayOf(0x42.toByte(), 0x4D.toByte()) to ".bmp",
     )
+
+    private val FORMAT_MAGIC = byteArrayOf(0x53, 0x56, 0x31, 0x00) // "SV1\0"
+
+    data class DecryptResult(val success: Int, val failed: Int)
+
+    private data class ParsedPayload(val originalName: String?, val content: ByteArray)
 
     private fun guessExtension(data: ByteArray): String {
         val sample = data.take(12).toByteArray()
@@ -54,8 +60,15 @@ object DecryptEngine {
         return ".bin"
     }
 
+    private fun extensionFromFileName(fileName: String): String? {
+        val clean = fileName.substringAfterLast('/').substringAfterLast('\\')
+        val dot = clean.lastIndexOf('.')
+        if (dot <= 0 || dot == clean.lastIndex) return null
+        return clean.substring(dot).lowercase()
+    }
+
     private fun mimeFromExtension(ext: String): String {
-        return when (ext) {
+        return when (ext.lowercase()) {
             ".jpg", ".jpeg" -> "image/jpeg"
             ".png" -> "image/png"
             ".gif" -> "image/gif"
@@ -71,7 +84,54 @@ object DecryptEngine {
         return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
     }
 
-    data class DecryptResult(val success: Int, val failed: Int)
+    private fun decryptFileBytes(encryptedData: ByteArray, key: SecretKey): ByteArray {
+        if (encryptedData.size < IV_LENGTH_BYTES + TAG_LENGTH_BYTES) {
+            throw IllegalArgumentException("الملف تالف أو غير مكتمل (أقل من طول IV + Tag)")
+        }
+
+        val iv = encryptedData.sliceArray(0 until IV_LENGTH_BYTES)
+        val ciphertext = encryptedData.sliceArray(IV_LENGTH_BYTES until encryptedData.size - TAG_LENGTH_BYTES)
+        val tag = encryptedData.sliceArray(encryptedData.size - TAG_LENGTH_BYTES until encryptedData.size)
+
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        val spec = GCMParameterSpec(TAG_LENGTH_BYTES * 8, iv)
+        cipher.init(Cipher.DECRYPT_MODE, key, spec)
+
+        return cipher.doFinal(ciphertext + tag)
+    }
+
+    private fun parsePayload(plaintext: ByteArray): ParsedPayload {
+        if (plaintext.size >= FORMAT_MAGIC.size + Int.SIZE_BYTES) {
+            var magicOk = true
+            for (i in FORMAT_MAGIC.indices) {
+                if (plaintext[i] != FORMAT_MAGIC[i]) {
+                    magicOk = false
+                    break
+                }
+            }
+
+            if (magicOk) {
+                val nameLen = ByteBuffer.wrap(
+                    plaintext,
+                    FORMAT_MAGIC.size,
+                    Int.SIZE_BYTES
+                ).int
+
+                val nameStart = FORMAT_MAGIC.size + Int.SIZE_BYTES
+                val nameEnd = nameStart + nameLen
+
+                if (nameLen >= 0 && nameEnd <= plaintext.size) {
+                    val originalName = String(plaintext, nameStart, nameLen, Charsets.UTF_8)
+                    if (originalName.isNotBlank()) {
+                        val content = plaintext.copyOfRange(nameEnd, plaintext.size)
+                        return ParsedPayload(originalName, content)
+                    }
+                }
+            }
+        }
+
+        return ParsedPayload(null, plaintext)
+    }
 
     suspend fun decrypt(
         context: Context,
@@ -127,7 +187,6 @@ object DecryptEngine {
                         return@forEachIndexed
                     }
 
-                    // قراءة الملف بالكامل (هذا يستهلك الذاكرة، لكنه بسيط)
                     val encryptedBytes = inputStream.readBytes()
                     if (encryptedBytes.isEmpty()) {
                         onLog("[$fileName] فشل: الملف فارغ.")
@@ -135,16 +194,8 @@ object DecryptEngine {
                         return@forEachIndexed
                     }
 
-                    // استخراج IV والـ Tag والنص المشفر
-                    val iv = encryptedBytes.sliceArray(0 until IV_LENGTH_BYTES)
-                    val ciphertext = encryptedBytes.sliceArray(IV_LENGTH_BYTES until encryptedBytes.size - TAG_LENGTH_BYTES)
-                    val tag = encryptedBytes.sliceArray(encryptedBytes.size - TAG_LENGTH_BYTES until encryptedBytes.size)
-
-                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                    cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_LENGTH_BYTES * 8, iv))
-
                     val plaintext = try {
-                        cipher.doFinal(ciphertext + tag)
+                        decryptFileBytes(encryptedBytes, key)
                     } catch (e: javax.crypto.AEADBadTagException) {
                         onLog("[$fileName] فشل: كلمة المرور أو الملح غير صحيحين (AEAD Bad Tag).")
                         failCount++
@@ -155,11 +206,23 @@ object DecryptEngine {
                         return@forEachIndexed
                     }
 
-                    // تخمين الامتداد من البداية
-                    val ext = guessExtension(plaintext)
-                    val baseName = fileName.removeSuffix(".enc")
-                    val newName = baseName + ext
-                    val mimeType = mimeFromExtension(ext)
+                    val parsed = parsePayload(plaintext)
+
+                    val (newName, mimeType, contentToWrite) = if (parsed.originalName != null) {
+                        val safeName = parsed.originalName
+                            .substringAfterLast('/')
+                            .substringAfterLast('\\')
+
+                        val ext = extensionFromFileName(safeName)
+                        val mime = if (ext != null) mimeFromExtension(ext) else mimeFromExtension(guessExtension(parsed.content))
+                        Triple(safeName, mime, parsed.content)
+                    } else {
+                        // توافق رجعي مع الملفات القديمة
+                        val baseName = fileName.removeSuffix(".enc")
+                        val ext = extensionFromFileName(baseName) ?: guessExtension(plaintext)
+                        val newNameLegacy = if (extensionFromFileName(baseName) != null) baseName else baseName + ext
+                        Triple(newNameLegacy, mimeFromExtension(ext), plaintext)
+                    }
 
                     val newFile = destDoc.createFile(mimeType, newName)
                     if (newFile == null) {
@@ -169,8 +232,9 @@ object DecryptEngine {
                     }
 
                     resolver.openOutputStream(newFile.uri).use { outputStream ->
-                        outputStream?.write(plaintext)
+                        outputStream?.write(contentToWrite)
                     }
+
                     onLog("[$fileName] -> نجاح: $newName")
                     successCount++
                 }

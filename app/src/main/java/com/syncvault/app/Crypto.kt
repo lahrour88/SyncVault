@@ -2,6 +2,7 @@ package com.syncvault.app
 
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.ByteBuffer
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.SecretKey
@@ -12,18 +13,6 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * Password-based AES-256-GCM encryption.
- *
- * We deliberately do NOT use Android Keystore for the encryption key: a
- * Keystore key is non-exportable by design and is bound to this specific
- * app install on this specific device. If the app is ever uninstalled or
- * the phone is lost, a Keystore-backed key is gone forever and every
- * encrypted file becomes permanently unreadable.
- *
- * Instead, the key is derived from a password the user chooses, combined
- * with a random salt. The salt is not secret and is written next to the
- * encrypted files (see SyncEngine), so a backup of the DriveSync folder
- * plus the remembered password is enough to reconstruct the key later,
- * independent of this device or this app install.
  */
 object Crypto {
     private const val ITERATIONS = 210_000
@@ -31,6 +20,10 @@ object Crypto {
     private const val SALT_LENGTH_BYTES = 16
     private const val GCM_IV_LENGTH_BYTES = 12
     private const val GCM_TAG_LENGTH_BITS = 128
+
+    // Header plaintext format:
+    // [MAGIC 4 bytes][NAME_LEN 4 bytes][NAME UTF-8][FILE DATA...]
+    private val FORMAT_MAGIC = byteArrayOf(0x53, 0x56, 0x31, 0x00) // "SV1\0"
 
     fun randomSalt(): ByteArray {
         val salt = ByteArray(SALT_LENGTH_BYTES)
@@ -52,13 +45,39 @@ object Crypto {
 
     /**
      * Encrypts the data from [input] and writes IV + ciphertext to [output].
-     * Memory usage is constant regardless of input size.
+     * If [originalFileName] is provided, it is stored inside the encrypted payload
+     * so the decrypt side can restore the original name.
      */
-    fun encryptStream(input: InputStream, output: OutputStream, key: SecretKey) {
+    fun encryptStream(
+        input: InputStream,
+        output: OutputStream,
+        key: SecretKey,
+        originalFileName: String = ""
+    ) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key)
         val iv = cipher.iv
         output.write(iv)
+
+        val safeName = originalFileName
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
+            .trim()
+
+        if (safeName.isNotBlank()) {
+            val nameBytes = safeName.toByteArray(Charsets.UTF_8)
+            val headerPlain = ByteBuffer
+                .allocate(FORMAT_MAGIC.size + Int.SIZE_BYTES + nameBytes.size)
+                .put(FORMAT_MAGIC)
+                .putInt(nameBytes.size)
+                .put(nameBytes)
+                .array()
+
+            val encryptedHeader = cipher.update(headerPlain)
+            if (encryptedHeader != null && encryptedHeader.isNotEmpty()) {
+                output.write(encryptedHeader)
+            }
+        }
 
         val buffer = ByteArray(8192)
         var bytesRead: Int
@@ -68,6 +87,7 @@ object Crypto {
                 output.write(encryptedChunk)
             }
         }
+
         val finalChunk = cipher.doFinal()
         if (finalChunk.isNotEmpty()) {
             output.write(finalChunk)
@@ -82,11 +102,7 @@ object Crypto {
         return iv + cipher.doFinal(plain)
     }
 
-    /**
-     * Decrypts a small in-memory blob produced by [encryptBytes].
-     * Throws (e.g. AEADBadTagException) if [key] is wrong — this is how we
-     * detect a mistyped password before touching any real file.
-     */
+    /** Decrypts a small in-memory blob produced by [encryptBytes]. */
     fun decryptBytes(data: ByteArray, key: SecretKey): ByteArray {
         val iv = data.copyOfRange(0, GCM_IV_LENGTH_BYTES)
         val cipherText = data.copyOfRange(GCM_IV_LENGTH_BYTES, data.size)
