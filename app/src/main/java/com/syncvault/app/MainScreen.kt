@@ -39,7 +39,9 @@ private fun displayName(uriString: String): String =
     Uri.parse(uriString).lastPathSegment ?: uriString
 
 @Composable
-fun MainScreen() {
+fun MainScreen(
+    onNavigateToDecrypt: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -195,6 +197,19 @@ fun MainScreen() {
             }
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = onNavigateToDecrypt,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        ) {
+            Text("🔓 فك تشفير الملفات (Decrypt)")
+        }
+
         Spacer(modifier = Modifier.height(8.dp))
 
         if (scanning || progress.total > 0) {
@@ -225,4 +240,3 @@ fun MainScreen() {
         }
     }
 }
-
