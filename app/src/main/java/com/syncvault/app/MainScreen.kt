@@ -145,7 +145,7 @@ fun MainScreen(
         Text(
             "Remember this password. It is never stored. Only a non-secret salt is " +
                 "saved inside the DriveSync folder — you need both the password and " +
-                "that folder to decrypt files in the future.",
+                "that folder to decrypt files in the future."+" the applcation from abdeladime",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -207,7 +207,7 @@ fun MainScreen(
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer
             )
         ) {
-            Text("🔓 فك تشفير الملفات (Decrypt)")
+            Text(" Decreption page"
         }
 
         Spacer(modifier = Modifier.height(8.dp))

@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private fun displayName(uriString: String?): String {
-    if (uriString == null) return "غير محدد"
+    if (uriString == null) return "indifined "
     return Uri.parse(uriString).lastPathSegment ?: uriString
 }
 
@@ -80,10 +80,10 @@ fun DecryptScreen(
         // عنوان ورجوع
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             TextButton(onClick = onNavigateBack) {
-                Text("← رجوع")
+                Text("Back")
             }
             Spacer(modifier = Modifier.weight(1f))
-            Text("فك التشفير", style = MaterialTheme.typography.titleLarge)
+            Text("decrypt", style = MaterialTheme.typography.titleLarge)
             Spacer(modifier = Modifier.weight(1f))
         }
 
@@ -93,13 +93,13 @@ fun DecryptScreen(
         OutlinedTextField(
             value = password,
             onValueChange = { password = it },
-            label = { Text("كلمة المرور (Password)") },
+            label = { Text("password :") },
             singleLine = true,
             visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             trailingIcon = {
                 TextButton(onClick = { passwordVisible = !passwordVisible }) {
-                    Text(if (passwordVisible) "إخفاء" else "إظهار")
+                    Text(if (passwordVisible) "Show" else "Hide")
                 }
             },
             modifier = Modifier.fillMaxWidth()
@@ -117,7 +117,7 @@ fun DecryptScreen(
             modifier = Modifier.fillMaxWidth()
         )
         Text(
-            text = "ادخل قيمة الملح المستخرجة من ملف syncvault.salt (نص Base64).",
+            Text="Enter the salt value extracted from the syncvault.salt file"
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -125,14 +125,14 @@ fun DecryptScreen(
 
         // اختيار مجلد المصدر
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("مجلد المصدر (.enc): ", modifier = Modifier.weight(0.4f))
+            Text("Source Folder (.enc): ", modifier = Modifier.weight(0.4f))
             Text(
                 text = displayName(sourceUri?.toString()),
                 modifier = Modifier.weight(0.4f),
                 style = MaterialTheme.typography.bodyMedium
             )
             Button(onClick = { sourcePicker.launch(null) }, modifier = Modifier.weight(0.2f)) {
-                Text("اختيار")
+                Text("select")
             }
         }
 
@@ -140,14 +140,14 @@ fun DecryptScreen(
 
         // اختيار مجلد الوجهة
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("مجلد الوجهة: ", modifier = Modifier.weight(0.4f))
+            Text(" Destination Folder", modifier = Modifier.weight(0.4f))
             Text(
                 text = displayName(destUri?.toString()),
                 modifier = Modifier.weight(0.4f),
                 style = MaterialTheme.typography.bodyMedium
             )
             Button(onClick = { destPicker.launch(null) }, modifier = Modifier.weight(0.2f)) {
-                Text("اختيار")
+                Text("select")
             }
         }
 
@@ -198,7 +198,7 @@ fun DecryptScreen(
 
             if (isRunning) {
                 Button(onClick = { /* يمكن إضافة إلغاء هنا لاحقاً */ }) {
-                    Text("إلغاء")
+                    Text("Cancel")
                 }
             }
         }
