@@ -44,7 +44,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ElevatedCardDefaults
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -209,15 +209,17 @@ fun SyncVaultSectionCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     ElevatedCard(
-        modifier = modifier
-            .fillMaxWidth()
-            .animateContentSize(),
-        shape = SyncVaultShapes.Card,
-        colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
-            containerColor = SyncVaultColors.CardWhite
-        ),
-        elevation = ElevatedCardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
-    ) {
+    modifier = modifier
+        .fillMaxWidth()
+        .animateContentSize(),
+    shape = SyncVaultShapes.Card,
+    colors = CardDefaults.elevatedCardColors(
+        containerColor = SyncVaultColors.CardWhite
+    ),
+    elevation = CardDefaults.elevatedCardElevation(
+        defaultElevation = 2.dp
+    )
+){
         Column(modifier = Modifier.padding(SyncVaultSpacing.SectionGap)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
