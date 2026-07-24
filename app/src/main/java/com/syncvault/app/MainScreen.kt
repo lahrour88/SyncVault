@@ -5,18 +5,19 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -81,162 +82,164 @@ val destPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenD
     }
 }
 
+val canScan = !scanning && sourceUris.isNotEmpty() && destUri != null && password.isNotBlank()
+
 Column(
     modifier = Modifier
         .fillMaxSize()
-        .padding(16.dp)
+        .background(SyncVaultColors.BackgroundGray)
         .verticalScroll(rememberScrollState())
+        .padding(SyncVaultSpacing.OuterPadding)
 ) {
-    Text("Dossiers source :", style = MaterialTheme.typography.titleSmall)
-    Spacer(modifier = Modifier.height(4.dp))
+    SyncVaultHero(
+        title = "SyncVault",
+        subtitle = "Protégez et synchronisez vos fichiers en toute sécurité."
+    )
 
-    if (sourceUris.isEmpty()) {
-        Text("Aucun dossier sélectionné.", style = MaterialTheme.typography.bodyMedium)
-    }
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
 
-    sourceUris.forEach { uriString ->
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-        ) {
-            Text(displayName(uriString), modifier = Modifier.weight(1f))
-            TextButton(onClick = {
-                sourceUris.remove(uriString)
-                saveSourceUris(prefs, sourceUris)
-            }) {
-                Text("Supprimer")
+    // Card 1 — Dossiers source
+    SyncVaultSectionCard(title = "Dossiers source", icon = Icons.Rounded.Folder) {
+        if (sourceUris.isEmpty()) {
+            HelperText("Aucun dossier sélectionné.")
+            Spacer(modifier = Modifier.height(8.dp))
+        } else {
+            sourceUris.forEach { uriString ->
+                SyncVaultFolderListItem(
+                    name = displayName(uriString),
+                    onRemove = {
+                        sourceUris.remove(uriString)
+                        saveSourceUris(prefs, sourceUris)
+                    }
+                )
             }
+            Spacer(modifier = Modifier.height(8.dp))
         }
-    }
-
-    Button(onClick = { addSourcePicker.launch(null) }) {
-        Text("+ Ajouter un dossier source")
-    }
-
-    Spacer(modifier = Modifier.height(16.dp))
-
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Dossier DriveSync : ", modifier = Modifier.weight(0.3f))
-        Text(
-            text = destUri?.let { displayName(it) } ?: "Non défini",
-            modifier = Modifier.weight(0.4f)
+        SyncVaultAddFolderButton(
+            onClick = { addSourcePicker.launch(null) },
+            label = "Ajouter un dossier source"
         )
-        Button(onClick = { destPicker.launch(null) }, modifier = Modifier.weight(0.3f)) {
-            Text("Choisir")
-        }
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
 
-    OutlinedTextField(
-        value = password,
-        onValueChange = { password = it },
-        label = { Text("Mot de passe de chiffrement") },
-        singleLine = true,
-        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        trailingIcon = {
-            TextButton(onClick = { passwordVisible = !passwordVisible }) {
-                Text(if (passwordVisible) "Masquer" else "Afficher")
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    )
+    // Card 2 — Dossier DriveSync
+    SyncVaultSectionCard(title = "Dossier DriveSync", icon = Icons.Rounded.Cloud) {
+        SyncVaultFolderRow(
+            label = "Destination sélectionnée",
+            currentName = destUri?.let { displayName(it) } ?: "Non défini",
+            icon = Icons.Rounded.Cloud,
+            onSelect = { destPicker.launch(null) }
+        )
+    }
 
-    Text(
-        "Conservez ce mot de passe. Il n'est jamais enregistré. Le fichier syncvault.salt est stocké dans le dossier DriveSync et sera nécessaire avec ce mot de passe pour déchiffrer les fichiers à l'avenir.",
-        style = MaterialTheme.typography.bodySmall
-    )
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
 
-    Spacer(modifier = Modifier.height(16.dp))
+    // Card 3 — Mot de passe de chiffrement
+    SyncVaultSectionCard(title = "Mot de passe de chiffrement", icon = Icons.Rounded.Lock) {
+        SyncVaultPasswordField(
+            value = password,
+            onValueChange = { password = it },
+            label = "Mot de passe de chiffrement",
+            visible = passwordVisible,
+            onToggleVisible = { passwordVisible = !passwordVisible }
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        HelperText(
+            "Conservez ce mot de passe. Il n'est jamais enregistré. Le fichier syncvault.salt est stocké dans le dossier DriveSync et sera nécessaire avec ce mot de passe pour déchiffrer les fichiers à l'avenir."
+        )
+    }
 
-    val canScan = !scanning && sourceUris.isNotEmpty() && destUri != null && password.isNotBlank()
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
 
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(
-            onClick = {
-                if (canScan) {
-                    scanning = true
-                    progress = SyncProgress(0, 0, 0, 0, 0)
-                    logLines.clear()
-                    stats = ""
-                    scanJob = scope.launch {
-                        try {
-                            engine.sync(
-                                sourceUris = sourceUris.map { Uri.parse(it) },
-                                destUri = Uri.parse(destUri!!),
-                                password = password.toCharArray(),
-                                onProgress = { progress = it },
-                                onLog = { msg ->
-                                    logLines.add(msg)
-                                    if (logLines.size > 200) {
-                                        logLines.removeAt(0)
-                                    }
-                                },
-                                onStats = { stats = it }
-                            )
-                        } catch (e: Exception) {
-                            logLines.add("Erreur grave : ${e.message}")
-                        } finally {
-                            scanning = false
-                            scanJob = null
-                        }
+    // Card 4 — Informations importantes
+    SyncVaultSectionCard(title = "Informations importantes", icon = Icons.Rounded.Info) {
+        SyncVaultInfoLines(
+            lines = listOf(
+                "Les fichiers originaux ne sont jamais modifiés.",
+                "Seuls les fichiers chiffrés sont synchronisés.",
+                "Le chiffrement utilise AES-256-GCM."
+            )
+        )
+    }
+
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
+
+    SyncVaultPrimaryButton(
+        text = if (scanning) "Analyse..." else "Analyser les fichiers",
+        onClick = {
+            if (canScan) {
+                scanning = true
+                progress = SyncProgress(0, 0, 0, 0, 0)
+                logLines.clear()
+                stats = ""
+                scanJob = scope.launch {
+                    try {
+                        engine.sync(
+                            sourceUris = sourceUris.map { Uri.parse(it) },
+                            destUri = Uri.parse(destUri!!),
+                            password = password.toCharArray(),
+                            onProgress = { progress = it },
+                            onLog = { msg ->
+                                logLines.add(msg)
+                                if (logLines.size > 200) {
+                                    logLines.removeAt(0)
+                                }
+                            },
+                            onStats = { stats = it }
+                        )
+                    } catch (e: Exception) {
+                        logLines.add("Erreur grave : ${e.message}")
+                    } finally {
+                        scanning = false
+                        scanJob = null
                     }
                 }
-            },
-            enabled = canScan
-        ) {
-            Text(if (scanning) "Analyse..." else "Analyser")
-        }
+            }
+        },
+        enabled = canScan,
+        loading = scanning
+    )
 
-        if (scanning) {
-            Button(onClick = { scanJob?.cancel() }) {
-                Text("Annuler")
+    if (scanning) {
+        Spacer(modifier = Modifier.height(8.dp))
+        SyncVaultSecondaryButton(
+            text = "Annuler",
+            onClick = { scanJob?.cancel() }
+        )
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    SyncVaultSecondaryButton(
+        text = "Ouvrir le déchiffrement",
+        onClick = onNavigateToDecrypt
+    )
+
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
+
+    if (scanning || progress.total > 0 || stats.isNotEmpty()) {
+        SyncVaultSectionCard(title = "Progression", icon = Icons.Rounded.Cloud) {
+            SyncVaultProgressBlock(
+                active = scanning,
+                progressFraction = if (scanning || progress.total > 0) progress.progress else null,
+                statusLine = if (progress.total > 0)
+                    "Traités : ${progress.processed}/${progress.total} | Chiffrés : ${progress.encrypted} | Ignorés : ${progress.skipped} | Échecs : ${progress.failed}"
+                else ""
+            )
+            if (stats.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(stats, style = MaterialTheme.typography.bodyMedium)
             }
         }
+        Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
-
-    Button(
-        onClick = onNavigateToDecrypt,
-        modifier = Modifier.fillMaxWidth(),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-        )
-    ) {
-        Text("Page de déchiffrement")
+    SyncVaultSectionCard(title = "Journal", icon = Icons.Rounded.Info) {
+        SyncVaultLogsBlock(logLines = logLines)
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
-
-    if (scanning || progress.total > 0) {
-        LinearProgressIndicator(progress = progress.progress, modifier = Modifier.fillMaxWidth())
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Traités : ${progress.processed}/${progress.total} | Chiffrés : ${progress.encrypted} | Ignorés : ${progress.skipped} | Échecs : ${progress.failed}",
-            style = MaterialTheme.typography.bodyMedium
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-    }
-
-    if (stats.isNotEmpty()) {
-        Text(stats, style = MaterialTheme.typography.bodyMedium)
-        Spacer(modifier = Modifier.height(8.dp))
-    }
-
-    Text("Journal :", style = MaterialTheme.typography.titleSmall)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 120.dp, max = 280.dp)
-            .verticalScroll(rememberScrollState())
-    ) {
-        logLines.forEach { line ->
-            Text(line, style = MaterialTheme.typography.bodySmall)
-        }
-    }
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.OuterPadding))
 }
 
 }

@@ -5,18 +5,19 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -60,154 +61,142 @@ val destPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenD
     }
 }
 
+val canStart = !isRunning && sourceUri != null && destUri != null &&
+        password.isNotBlank() && salt.isNotBlank()
+
 Column(
     modifier = Modifier
         .fillMaxSize()
-        .padding(16.dp)
+        .background(SyncVaultColors.BackgroundGray)
         .verticalScroll(rememberScrollState())
+        .padding(SyncVaultSpacing.OuterPadding)
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        TextButton(onClick = onNavigateBack) {
-            Text("Retour")
-        }
-        Spacer(modifier = Modifier.weight(1f))
-        Text("Déchiffrement", style = MaterialTheme.typography.titleLarge)
-        Spacer(modifier = Modifier.weight(1f))
-    }
-
-    Spacer(modifier = Modifier.height(16.dp))
-
-    OutlinedTextField(
-        value = password,
-        onValueChange = { password = it },
-        label = { Text("Mot de passe :") },
-        singleLine = true,
-        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        trailingIcon = {
-            TextButton(onClick = { passwordVisible = !passwordVisible }) {
-                Text(if (passwordVisible) "Masquer" else "Afficher")
-            }
-        },
-        modifier = Modifier.fillMaxWidth()
-    )
+    SyncVaultBackRow(onBack = onNavigateBack)
 
     Spacer(modifier = Modifier.height(8.dp))
 
-    OutlinedTextField(
-        value = salt,
-        onValueChange = { salt = it },
-        label = { Text("Sel (Salt) — format Base64") },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-        modifier = Modifier.fillMaxWidth()
-    )
-    Text(
-        text = "Saisissez la valeur du sel extraite du fichier syncvault.salt.",
-        style = MaterialTheme.typography.bodySmall
+    SyncVaultHero(
+        title = "Déchiffrement",
+        subtitle = "Restaurez vos fichiers en toute sécurité."
     )
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Dossier source (.enc) : ", modifier = Modifier.weight(0.4f))
-        Text(
-            text = displayName(sourceUri?.toString()),
-            modifier = Modifier.weight(0.4f),
-            style = MaterialTheme.typography.bodyMedium
+    // Card 1 — Mot de passe
+    SyncVaultSectionCard(title = "Mot de passe", icon = Icons.Rounded.Lock) {
+        SyncVaultPasswordField(
+            value = password,
+            onValueChange = { password = it },
+            label = "Mot de passe",
+            visible = passwordVisible,
+            onToggleVisible = { passwordVisible = !passwordVisible }
         )
-        Button(onClick = { sourcePicker.launch(null) }, modifier = Modifier.weight(0.2f)) {
-            Text("Choisir")
-        }
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Dossier de destination : ", modifier = Modifier.weight(0.4f))
-        Text(
-            text = displayName(destUri?.toString()),
-            modifier = Modifier.weight(0.4f),
-            style = MaterialTheme.typography.bodyMedium
+    // Card 2 — Sel cryptographique
+    SyncVaultSectionCard(title = "Sel cryptographique", icon = Icons.Rounded.Key) {
+        SyncVaultTextField(
+            value = salt,
+            onValueChange = { salt = it },
+            label = "Sel (Salt) — format Base64",
+            leadingIcon = Icons.Rounded.Key
         )
-        Button(onClick = { destPicker.launch(null) }, modifier = Modifier.weight(0.2f)) {
-            Text("Choisir")
-        }
+        Spacer(modifier = Modifier.height(8.dp))
+        HelperText("Saisissez la valeur du sel extraite du fichier syncvault.salt.")
     }
 
-    Spacer(modifier = Modifier.height(16.dp))
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
 
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        val canStart = !isRunning && sourceUri != null && destUri != null &&
-                password.isNotBlank() && salt.isNotBlank()
+    // Card 3 — Dossier contenant les fichiers chiffrés
+    SyncVaultSectionCard(title = "Dossier contenant les fichiers chiffrés", icon = Icons.Rounded.Folder) {
+        SyncVaultFolderRow(
+            label = "Dossier source (.enc)",
+            currentName = displayName(sourceUri?.toString()),
+            icon = Icons.Rounded.Folder,
+            onSelect = { sourcePicker.launch(null) }
+        )
+    }
 
-        Button(
-            onClick = {
-                if (canStart) {
-                    isRunning = true
-                    logLines.clear()
-                    progressText = "Traitement en cours..."
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
 
-                    scope.launch {
-                        try {
-                            val result = DecryptEngine.decrypt(
-                                context = context,
-                                sourceUri = sourceUri!!,
-                                destUri = destUri!!,
-                                password = password,
-                                saltBase64 = salt,
-                                onLog = { msg ->
-                                    logLines.add(msg)
-                                    if (logLines.size > 200) logLines.removeAt(0)
-                                },
-                                onProgress = { current, total ->
-                                    progressText = "Traitement : $current / $total"
-                                }
-                            )
-                            progressText = "Déchiffrement terminé : ${result.success} réussi(s), ${result.failed} échec(s)"
-                        } catch (e: Exception) {
-                            logLines.add("Erreur grave : ${e.message}")
-                            progressText = "Échec de l'opération"
-                        } finally {
-                            isRunning = false
-                        }
+    // Card 4 — Dossier de destination
+    SyncVaultSectionCard(title = "Dossier de destination", icon = Icons.Rounded.FolderOpen) {
+        SyncVaultFolderRow(
+            label = "Dossier de destination",
+            currentName = displayName(destUri?.toString()),
+            icon = Icons.Rounded.FolderOpen,
+            onSelect = { destPicker.launch(null) }
+        )
+    }
+
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
+
+    SyncVaultPrimaryButton(
+        text = if (isRunning) "En cours..." else "Déchiffrer",
+        onClick = {
+            if (canStart) {
+                isRunning = true
+                logLines.clear()
+                progressText = "Traitement en cours..."
+
+                scope.launch {
+                    try {
+                        val result = DecryptEngine.decrypt(
+                            context = context,
+                            sourceUri = sourceUri!!,
+                            destUri = destUri!!,
+                            password = password,
+                            saltBase64 = salt,
+                            onLog = { msg ->
+                                logLines.add(msg)
+                                if (logLines.size > 200) logLines.removeAt(0)
+                            },
+                            onProgress = { current, total ->
+                                progressText = "Traitement : $current / $total"
+                            }
+                        )
+                        progressText = "Déchiffrement terminé : ${result.success} réussi(s), ${result.failed} échec(s)"
+                    } catch (e: Exception) {
+                        logLines.add("Erreur grave : ${e.message}")
+                        progressText = "Échec de l'opération"
+                    } finally {
+                        isRunning = false
                     }
                 }
-            },
-            enabled = canStart
-        ) {
-            Text(if (isRunning) "En cours..." else "🔓 Déchiffrer")
-        }
-
-        if (isRunning) {
-            Button(onClick = { /* Annulation possible plus tard */ }) {
-                Text("Annuler")
             }
-        }
+        },
+        enabled = canStart,
+        loading = isRunning
+    )
+
+    if (isRunning) {
+        Spacer(modifier = Modifier.height(8.dp))
+        SyncVaultSecondaryButton(
+            text = "Annuler",
+            onClick = { /* Annulation possible plus tard */ }
+        )
     }
 
-    Spacer(modifier = Modifier.height(8.dp))
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
 
     if (progressText.isNotEmpty()) {
-        Text(progressText, style = MaterialTheme.typography.bodyMedium)
-        Spacer(modifier = Modifier.height(4.dp))
+        SyncVaultSectionCard(title = "Progression", icon = Icons.Rounded.FolderOpen) {
+            SyncVaultProgressBlock(
+                active = isRunning,
+                progressFraction = null,
+                statusLine = progressText
+            )
+        }
+        Spacer(modifier = Modifier.height(SyncVaultSpacing.SectionGap))
     }
 
-    Text("Journal des opérations :", style = MaterialTheme.typography.titleSmall)
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 100.dp, max = 250.dp)
-            .verticalScroll(rememberScrollState())
-    ) {
-        if (logLines.isEmpty()) {
-            Text("Aucun journal disponible.", style = MaterialTheme.typography.bodySmall)
-        } else {
-            logLines.forEach { line ->
-                Text(line, style = MaterialTheme.typography.bodySmall)
-            }
-        }
+    SyncVaultSectionCard(title = "Journal", icon = Icons.Rounded.Folder) {
+        SyncVaultLogsBlock(logLines = logLines)
     }
+
+    Spacer(modifier = Modifier.height(SyncVaultSpacing.OuterPadding))
 }
 
 }
